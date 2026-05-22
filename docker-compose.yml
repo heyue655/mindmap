@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  # ── MySQL 数据库 ─────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── 主应用 ──────────────────────────────────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── 上级关系定时同步（每天凌晨 2:00） ──────────────────────────
+  cron:
+    image: alpine:3.19
+    restart: unless-stopped
+    environment:
+      # 内部服务地址（通过 Docker 内部网络访问 app 容器）
+      APP_INTERNAL_URL: http://app:3000
+      CRON_SECRET: ${CRON_SECRET}
+    volumes:
+      - ./docker/crontab:/etc/crontabs/root:ro
+      - cron-logs:/var/log
+    command: >
+      sh -c "apk add --no-cache wget &&
+             crond -f -l 6"
+    depends_on:
+      - app
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  cron-logs:

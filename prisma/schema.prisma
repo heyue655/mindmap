@@ -1,0 +1,557 @@
+// 数据源：MySQL（生产）
+// 时区规范：所有 DateTime 字段存储北京时间（UTC+8），通过 src/lib/prisma.ts 中间件设置 time_zone='+08:00'
+// 主键规范：所有表主键使用 INT AUTO_INCREMENT
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────
+// 组织架构
+// ────────────────────────────────────────────
+
+/// 用户账号表
+model User {
+  /// 主键，自增
+  id              Int      @id @default(autoincrement())
+  /// 工号，全局唯一
+  employeeNo      String   @unique @db.VarChar(64)
+  /// 姓名
+  name            String   @db.VarChar(64)
+  /// 邮箱，全局唯一
+  email           String   @unique @db.VarChar(128)
+  /// 密码哈希（bcrypt cost≥12）；演示模式可为空
+  passwordHash    String?  @db.VarChar(128)
+  /// 头像 emoji 或图片 URL
+  avatar          String?  @db.VarChar(256)
+  /// 所属部门 ID
+  departmentId    Int
+  /// 岗位职称
+  jobTitle        String   @db.VarChar(64)
+  /// 状态：active=启用 disabled=禁用
+  status          String   @default("active") @db.VarChar(16)
+  /// 是否为管理员（可调用 reset 等高权限接口）
+  isAdmin         Boolean  @default(false)
+  /// 是否绑定钉钉
+  dingtalkBound   Boolean  @default(false)
+  /// 钉钉用户 ID（由管理员手动录入，非空时 dingtalkBound 自动置 true；用于工作通知推送）
+  dingtalkUserId  String?  @db.VarChar(128)
+  /// 已连接的日历（JSON 数组：["mac","dingtalk","google"]）
+  connectedCalendars Json?
+  /// 直接上级用户 ID（NULL 表示无上级）
+  managerId       Int?
+  /// 上级来源：dingtalk=钉钉同步写入 manual=管理员手动设置 null=未设置
+  managerSource   String?   @db.VarChar(16)
+  /// 上级关系最后同步时间（NULL 表示从未同步；由 sync-manager-relations 接口写入）
+  managerSyncedAt DateTime?
+  /// 钉钉同步发现的建议上级 ID（与 managerId 冲突时暂存，NULL 表示无冲突）
+  pendingManagerId Int?
+  /// 是否需要在下次登录时重置密码（管理员新建用户时自动设为 true）
+  mustResetPassword Boolean @default(false)
+  /// 创建时间（北京时间）
+  createdAt       DateTime @default(now())
+  /// 最后更新时间（北京时间）
+  updatedAt       DateTime @updatedAt
+
+  department         Department     @relation(fields: [departmentId], references: [id])
+  manager            User?          @relation("UserManager", fields: [managerId], references: [id])
+  subordinates       User[]         @relation("UserManager")
+  pendingManager     User?          @relation("UserPendingManager", fields: [pendingManagerId], references: [id])
+  pendingSubordinates User[]        @relation("UserPendingManager")
+  mindmaps        MindMap[]
+  nodes           Node[]         @relation("NodeCreator")
+  assignments_as_assigner Assignment[] @relation("Assigner")
+  assignments_as_assignee Assignment[] @relation("Assignee")
+  workReports     WorkReport[]
+  notifications   AppNotification[] @relation("Recipient")
+  calendarSyncs   CalendarSync[]
+
+  @@index([managerId])
+  @@index([pendingManagerId])
+  @@index([managerSyncedAt])
+  @@map("users")
+}
+
+/// 部门表
+model Department {
+  /// 主键，自增
+  id          Int     @id @default(autoincrement())
+  /// 部门名称
+  name        String  @db.VarChar(64)
+  /// 上级部门 ID（根部门为 NULL）
+  parentId    Int?
+  /// 钉钉部门 ID（从钉钉同步时写入，用于 upsert 精确匹配；手动创建部门为 NULL）
+  dingDeptId  Int?    @unique
+
+  parent   Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children Department[] @relation("DeptTree")
+  users    User[]
+
+  @@map("departments")
+}
+
+/// 组织汇报关系表
+model OrgRelation {
+  /// 主键，自增
+  id              Int      @id @default(autoincrement())
+  /// 下级用户 ID
+  subordinateId   Int
+  /// 上级/管理者用户 ID
+  managerId       Int
+  /// 汇报类型：solid=实线汇报 dotted=虚线汇报
+  relationType    String   @db.VarChar(8)
+  /// 生效日期（YYYY-MM-DD）
+  effectiveFrom   String   @db.VarChar(16)
+  /// 失效日期（dotted 关系必填；实线一般为 NULL）
+  effectiveTo     String?  @db.VarChar(16)
+  /// 创建时间（北京时间）
+  createdAt       DateTime @default(now())
+
+  @@index([subordinateId])
+  @@index([managerId])
+  @@map("org_relations")
+}
+
+// ────────────────────────────────────────────
+// 思维导图
+// ────────────────────────────────────────────
+
+/// 思维导图表
+model MindMap {
+  /// 主键，自增
+  id          Int      @id @default(autoincrement())
+  /// 所有者用户 ID
+  ownerId     Int
+  /// 年份（如 2026）
+  year        Int
+  /// 导图名称
+  title       String?  @db.VarChar(128)
+  /// 布局结构：mindmap/right-logic/org-chart
+  structure   String?  @db.VarChar(32)
+  /// 视觉主题：snowbrush/business/mono
+  theme       String?  @db.VarChar(32)
+  /// 是否启用年度模板骨架
+  useAnnualTemplate Boolean @default(false)
+  /// 创建时间（北京时间）
+  createdAt   DateTime @default(now())
+  /// 最后更新时间（北京时间）
+  updatedAt   DateTime @updatedAt
+
+  owner       User     @relation(fields: [ownerId], references: [id])
+  nodes       Node[]
+
+  @@index([ownerId])
+  @@map("mindmaps")
+}
+
+/// 节点表（思维导图核心实体；task 字段非空时该节点即为任务）
+model Node {
+  /// 主键，自增
+  id              Int      @id @default(autoincrement())
+  /// 所属导图 ID
+  mindmapId       Int
+  /// 父节点 ID（NULL 表示根节点）
+  parentId        Int?
+  /// 同级排序序号
+  sortOrder       Int      @default(0)
+  /// 节点标题
+  title           String   @db.VarChar(512)
+  /// 节点描述
+  description     String?  @db.Text
+  /// 节点类型：skeleton=骨架节点 normal=普通节点
+  nodeType        String   @default("normal") @db.VarChar(16)
+  /// 时间桶类型：year/quarter/month/week
+  timeBucketKind  String?  @db.VarChar(8)
+  /// 时间桶值（如"2026"/"2026Q1"/"2026-03"/"2026-W12"）
+  timeBucketValue String?  @db.VarChar(16)
+  /// 创建者用户 ID
+  createdBy       Int
+  /// 是否已软删除
+  isDeleted       Boolean  @default(false)
+  /// 软删除时间（北京时间）
+  deletedAt       DateTime?
+  /// 任务字段（JSON；非空时该节点即为任务）
+  task            Json?
+  /// XMind 标记图标列表（JSON 数组）
+  markers         Json?
+  /// 长文本笔记
+  notes           String?  @db.Text
+  /// 自由文本标签（JSON 数组）
+  labels          Json?
+  /// 超链接 URL
+  hyperlink       String?  @db.VarChar(2048)
+  /// 图片（data URL 或外链）
+  image           String?  @db.Text
+  /// 概要节点覆盖的兄弟节点 ID 列表（JSON 数组）
+  summaryRange    Json?
+  /// 边界节点覆盖的兄弟节点 ID 列表（JSON 数组）
+  boundaryRange   Json?
+  /// 是否为浮动主题
+  isFloating      Boolean  @default(false)
+  /// 浮动主题 X 坐标
+  floatX          Float?
+  /// 浮动主题 Y 坐标
+  floatY          Float?
+  /// 上下级成对任务关联（JSON；派任务/关注通过后生成）
+  taskPeer        Json?
+  /// 节点样式覆盖（JSON；右侧「样式」面板数据）
+  topicFormat     Json?
+  /// 创建时间（北京时间）
+  createdAt       DateTime @default(now())
+  /// 最后更新时间（北京时间）
+  updatedAt       DateTime @updatedAt
+
+  mindmap         MindMap  @relation(fields: [mindmapId], references: [id])
+  creator         User     @relation("NodeCreator", fields: [createdBy], references: [id])
+  logs            TaskLog[]
+  attachments     Attachment[]
+  calendarSyncs   CalendarSync[]
+  mentionEvents   MentionEvent[]
+  shares          NodeShare[]
+  relationships_from Relationship[] @relation("RelFrom")
+  relationships_to   Relationship[] @relation("RelTo")
+
+  @@index([mindmapId])
+  @@index([createdBy])
+  @@map("nodes")
+}
+
+/// XMind 联系线（节点间自由连线）
+model Relationship {
+  /// 主键，自增
+  id          Int      @id @default(autoincrement())
+  /// 所属导图 ID
+  mindmapId   Int
+  /// 起始节点 ID
+  fromId      Int
+  /// 目标节点 ID
+  toId        Int
+  /// 连线标签
+  label       String?  @db.VarChar(128)
+  /// 创建者用户 ID
+  createdBy   Int
+  /// 创建时间（北京时间）
+  createdAt   DateTime @default(now())
+
+  fromNode    Node     @relation("RelFrom", fields: [fromId], references: [id])
+  toNode      Node     @relation("RelTo", fields: [toId], references: [id])
+
+  @@index([mindmapId])
+  @@map("relationships")
+}
+
+// ────────────────────────────────────────────
+// 任务日志与附件
+// ────────────────────────────────────────────
+
+/// 任务日志表
+model TaskLog {
+  /// 主键，自增
+  id          Int      @id @default(autoincrement())
+  /// 关联节点 ID
+  nodeId      Int
+  /// 作者用户 ID
+  authorId    Int
+  /// 日志类型：status_change/progress_change/comment/attachment_added/assignment_event
+  logType     String   @db.VarChar(32)
+  /// 日志正文
+  contentText String   @db.Text
+  /// 附加元数据（JSON）
+  contentMeta Json?
+  /// 创建时间（北京时间）
+  createdAt   DateTime @default(now())
+
+  node        Node     @relation(fields: [nodeId], references: [id])
+
+  @@index([nodeId])
+  @@map("task_logs")
+}
+
+/// 附件表
+model Attachment {
+  /// 主键，自增
+  id          Int      @id @default(autoincrement())
+  /// 关联节点 ID
+  nodeId      Int
+  /// 关联日志 ID（可选）
+  logId       Int?
+  /// 文件名
+  fileName    String   @db.VarChar(256)
+  /// 文件 URL（原型用 data URL 或占位符）
+  fileUrl     String   @db.Text
+  /// 文件大小（字节）
+  fileSize    Int
+  /// MIME 类型
+  mimeType    String   @db.VarChar(128)
+  /// 上传者用户 ID
+  uploadedBy  Int
+  /// 上传时间（北京时间）
+  uploadedAt  DateTime @default(now())
+
+  node        Node     @relation(fields: [nodeId], references: [id])
+
+  @@index([nodeId])
+  @@map("attachments")
+}
+
+// ────────────────────────────────────────────
+// 协作工作流
+// ────────────────────────────────────────────
+
+/// 派任务流程表
+model Assignment {
+  /// 主键，自增
+  id                    Int      @id @default(autoincrement())
+  /// 派单者用户 ID
+  assignerId            Int
+  /// 接单者用户 ID
+  assigneeId            Int
+  /// 目标导图 ID（初始可为空，登录时 reconciliation 自动填充）
+  targetMindmapId       Int?
+  /// 目标骨架节点 ID（初始可为空，登录时 reconciliation 自动填充）
+  targetSkeletonNodeId  Int?
+  /// 时间桶类型：quarter / month（用于 reconciliation 匹配骨架节点）
+  timeBucketKind        String?  @db.VarChar(32)
+  /// 时间桶值，如 "2025-Q1"（用于 reconciliation 匹配骨架节点）
+  timeBucketValue       String?  @db.VarChar(32)
+  /// 建议任务标题
+  proposedTitle         String   @db.VarChar(512)
+  /// 建议任务描述
+  proposedDescription   String?  @db.Text
+  /// 建议截止日期（YYYY-MM-DD）
+  proposedDeadline      String?  @db.VarChar(16)
+  /// 建议优先级：P0/P1/P2/P3
+  proposedPriority      String   @db.VarChar(4)
+  /// 流程状态：pending/accepted/negotiating/adjusted/rejected_by_system
+  state                 String   @default("pending") @db.VarChar(24)
+  /// 接受后在接单者导图中生成的节点 ID
+  resultNodeId          Int?
+  /// 接受后在派单者导图中生成的镜像节点 ID
+  assignerMirrorNodeId  Int?
+  /// 派任务时上级在自己导图中选中的原始普通节点 ID（无 task/taskPeer 时记录）；
+  /// 接单者接受后该节点直接升级为 mirror 任务节点，而非新建副本
+  assignerSourceNodeId  Int?
+  /// 调整请求（JSON）
+  adjustmentRequest     Json?
+  /// 创建时间（北京时间）
+  createdAt             DateTime @default(now())
+  /// 处理完成时间（北京时间）
+  resolvedAt            DateTime?
+
+  assigner    User     @relation("Assigner", fields: [assignerId], references: [id])
+  assignee    User     @relation("Assignee", fields: [assigneeId], references: [id])
+
+  @@index([assignerId])
+  @@index([assigneeId])
+  @@map("assignments")
+}
+
+/// 关注授权表（下级申请查看上级节点）
+model FollowGrant {
+  /// 主键，自增
+  id                  Int      @id @default(autoincrement())
+  /// 申请者（下级）用户 ID
+  requesterId         Int
+  /// 被申请者（上级）用户 ID
+  granteeId           Int
+  /// 目标节点 ID
+  targetNodeId        Int
+  /// 关注范围：single_task/subtree
+  scope               String   @db.VarChar(16)
+  /// 状态：pending/granted/denied/revoked/expired
+  state               String   @default("pending") @db.VarChar(16)
+  /// 到期时间（北京时间）
+  expiresAt           DateTime
+  /// 申请理由
+  reason              String?  @db.Text
+  /// 审批意见
+  decidedReason       String?  @db.Text
+  /// 同意后在上级导图中生成的镜像节点 ID
+  granteeMirrorNodeId Int?
+  /// 创建时间（北京时间）
+  createdAt           DateTime @default(now())
+  /// 审批时间（北京时间）
+  decidedAt           DateTime?
+
+  @@index([requesterId])
+  @@index([granteeId])
+  @@map("follow_grants")
+}
+
+/// 节点分享表
+model NodeShare {
+  /// 主键，自增
+  id          Int      @id @default(autoincrement())
+  /// 分享者用户 ID
+  sharerId    Int
+  /// 接收者用户 ID
+  audienceId  Int
+  /// 分享的节点 ID
+  nodeId      Int
+  /// 创建时间（北京时间）
+  createdAt   DateTime @default(now())
+  /// 撤销时间（北京时间；NULL 表示未撤销）
+  revokedAt   DateTime?
+
+  node        Node     @relation(fields: [nodeId], references: [id])
+
+  @@index([nodeId])
+  @@index([audienceId])
+  @@map("node_shares")
+}
+
+// ────────────────────────────────────────────
+// @ 提及
+// ────────────────────────────────────────────
+
+/// @ 提及事件表
+model MentionEvent {
+  /// 主键，自增
+  id                Int      @id @default(autoincrement())
+  /// 所在节点 ID
+  nodeId            Int
+  /// 发起提及的用户 ID
+  byUserId          Int
+  /// 被提及的用户 ID
+  mentionedUserId   Int
+  /// 提及类型：assign=派任务 discuss=拉讨论
+  kind              String   @db.VarChar(16)
+  /// 原始文本（含 @姓名）
+  text              String   @db.Text
+  /// 创建时间（北京时间）
+  createdAt         DateTime @default(now())
+  /// 钉钉推送时间（北京时间；NULL 表示未推送）
+  dingtalkPushedAt  DateTime?
+
+  node              Node     @relation(fields: [nodeId], references: [id])
+
+  @@index([nodeId])
+  @@index([mentionedUserId])
+  @@map("mention_events")
+}
+
+// ────────────────────────────────────────────
+// 通知
+// ────────────────────────────────────────────
+
+/// 应用内通知表
+model AppNotification {
+  /// 主键，自增
+  id                  Int      @id @default(autoincrement())
+  /// 接收者用户 ID
+  recipientId         Int
+  /// 触发者用户 ID（系统通知为 NULL）
+  actorId             Int?
+  /// 通知类型（详见 types/index.ts NotificationKind）
+  kind                String   @db.VarChar(48)
+  /// 通知标题
+  title               String   @db.VarChar(256)
+  /// 通知详情
+  body                String?  @db.Text
+  /// 关联节点 ID
+  refNodeId           Int?
+  /// 关联派任务 ID
+  refAssignmentId     Int?
+  /// 关联关注授权 ID
+  refFollowGrantId    Int?
+  /// 关联工作汇报 ID
+  refReportId         Int?
+  /// 创建时间（北京时间）
+  createdAt           DateTime @default(now())
+  /// 已读时间（北京时间；NULL 表示未读）
+  readAt              DateTime?
+  /// 钉钉推送时间（北京时间）
+  dingtalkPushedAt    DateTime?
+  /// 来源日历（calendar_* 通知专用）
+  calendarProvider    String?  @db.VarChar(16)
+
+  recipient           User     @relation("Recipient", fields: [recipientId], references: [id])
+
+  @@index([recipientId])
+  @@map("app_notifications")
+}
+
+// ────────────────────────────────────────────
+// 工作汇报
+// ────────────────────────────────────────────
+
+/// 工作汇报表
+model WorkReport {
+  /// 主键，自增
+  id                Int      @id @default(autoincrement())
+  /// 作者用户 ID
+  authorId          Int
+  /// 类型：weekly/monthly/quarterly
+  kind              String   @db.VarChar(16)
+  /// 周期标签（如"2026年第20周"）
+  periodLabel       String   @db.VarChar(64)
+  /// 周期开始日（YYYY-MM-DD）
+  periodStart       String   @db.VarChar(16)
+  /// 周期结束日（YYYY-MM-DD）
+  periodEnd         String   @db.VarChar(16)
+  /// 报告正文（Markdown）
+  contentMarkdown   String   @db.LongText
+  /// 统计摘要（JSON）
+  summaryStats      Json?
+  /// 状态：draft/submitted
+  status            String   @default("draft") @db.VarChar(16)
+  /// 提交时间（北京时间）
+  submittedAt       DateTime?
+  /// 提交给的直属上级用户 ID
+  submitToUserId    Int?
+  /// @ 通知的同事用户 ID 列表（JSON 数组）
+  ccUserIds         Json     @default("[]")
+  /// 创建时间（北京时间）
+  createdAt         DateTime @default(now())
+  /// 最后更新时间（北京时间）
+  updatedAt         DateTime @updatedAt
+
+  author            User     @relation(fields: [authorId], references: [id])
+
+  @@index([authorId])
+  @@map("work_reports")
+}
+
+// ────────────────────────────────────────────
+// 日历集成
+// ────────────────────────────────────────────
+
+/// 外部日历同步记录表
+model CalendarSync {
+  /// 主键，自增
+  id                Int      @id @default(autoincrement())
+  /// 关联节点 ID
+  nodeId            Int
+  /// 节点所有者用户 ID
+  userId            Int
+  /// 日历提供商：mac/dingtalk/google
+  provider          String   @db.VarChar(16)
+  /// 外部日历事件 ID
+  externalEventId   String   @db.VarChar(256)
+  /// 末次同步时的节点标题快照
+  syncedTitle       String   @db.VarChar(512)
+  /// 末次同步时的截止日期快照
+  syncedDeadline    String?  @db.VarChar(16)
+  /// 末次同步时的任务状态快照
+  syncedStatus      String?  @db.VarChar(16)
+  /// 外部日历是否已勾选完成（外部→应用单向回写）
+  externalCompleted Boolean  @default(false)
+  /// 同步状态：synced/pending/failed
+  status            String   @default("pending") @db.VarChar(16)
+  /// 末次同步时间（北京时间）
+  syncedAt          DateTime @default(now())
+  /// 错误信息（失败时填写）
+  lastError         String?  @db.Text
+
+  node              Node     @relation(fields: [nodeId], references: [id])
+  user              User     @relation(fields: [userId], references: [id])
+
+  @@index([nodeId])
+  @@index([userId])
+  @@map("calendar_syncs")
+}
