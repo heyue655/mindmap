@@ -526,6 +526,9 @@ export async function fetchDingtalkDeptTree(): Promise<DingtalkDept[]> {
     for (const childId of subData.result?.dept_id_list ?? []) {
       queue.push([childId, currentId]);
     }
+    
+    // 在遍历部门树时添加延时，避免API限流
+    await new Promise(resolve => setTimeout(resolve, 200)); // 200ms延时
   }
 
   return result;
@@ -606,6 +609,11 @@ async function fetchUsersForOneDept(
     users.push(...(data.result?.list ?? []));
     hasMore = data.result?.has_more ?? false;
     cursor = data.result?.next_cursor ?? cursor + 50;
+    
+    // 在分页请求之间添加延时，避免API限流
+    if (hasMore) {
+      await new Promise(resolve => setTimeout(resolve, 300)); // 300ms延时
+    }
   }
 
   return users;
@@ -642,7 +650,8 @@ export async function fetchAllDingtalkUsers(knownDeptIds?: number[]): Promise<Di
   const userMap = new Map<string, DingtalkSyncUser>();
 
   // 并行拉取，每批最多 DEPT_CONCURRENCY 个部门同时请求
-  const DEPT_CONCURRENCY = 5;
+  // 降低并发数以避免API限流
+  const DEPT_CONCURRENCY = 2; // 从5降低到2
   for (let i = 0; i < allDeptIds.length; i += DEPT_CONCURRENCY) {
     const chunk = allDeptIds.slice(i, i + DEPT_CONCURRENCY);
     const results = await Promise.all(chunk.map((id) => fetchUsersForOneDept(token, id)));
@@ -662,6 +671,11 @@ export async function fetchAllDingtalkUsers(knownDeptIds?: number[]): Promise<Di
           });
         }
       }
+    }
+    
+    // 在批次之间添加延时，进一步控制API调用频率
+    if (i + DEPT_CONCURRENCY < allDeptIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 500)); // 500ms延时
     }
   }
 
