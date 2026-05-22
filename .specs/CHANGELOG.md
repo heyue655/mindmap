@@ -1,5 +1,20 @@
 # 变更日志
 
+## [2026-05-22] 钉钉SSO登录与链接通知消息
+
+### 新增
+- T-07-007 实现钉钉SSO单点登录功能，包含 `/api/auth/dingtalk/callback` 回调接口和 `generateDingtalkAuthUrl` 工具函数
+- T-07-008 支持发送带链接的钉钉通知消息，用户可在钉钉中点击跳转到系统页面
+- T-07-009 创建 `DingtalkSsoButton` 组件和登录页面，方便用户使用钉钉账号登录
+- T-07-010 添加 `/api/health` 健康检查端点，供nginx和服务监控使用
+- M-10 新增钉钉集成模块文档 `M-07-DingTalkIntegration.md`
+
+### 变更
+- `src/lib/dingtalk.ts` 重构消息发送功能，支持文本和链接两种消息类型
+- `pushPendingDingtalkNotifs` 函数扩展支持发送链接消息类型
+- 更新 `.env.example` 添加钉钉SSO相关配置说明
+- 更新 `.specs/MODULES.md` 注册M-10钉钉集成模块
+
 ## [2026-05-22] Docker 一键部署：新增 MySQL 服务 + Dockerfile
 
 ### 新增

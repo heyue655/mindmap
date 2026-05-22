@@ -13,6 +13,7 @@
 | M-07 | notifications | 通知中心 | [M-07-notifications.md](modules/M-07-notifications.md) | ACTIVE |
 | M-08 | user-mgmt | 用户管理 | [M-08-user-mgmt.md](modules/M-08-user-mgmt.md) | ACTIVE |
 | M-09 | dept-mgmt | 部门管理 | [M-09-dept-mgmt.md](modules/M-09-dept-mgmt.md) | ACTIVE |
+| M-10 | dingtalk-integration | 钉钉集成 | [M-07-DingTalkIntegration.md](modules/M-07-DingTalkIntegration.md) | ACTIVE |
 
 ## 新增模块规范
 

@@ -88,19 +88,41 @@ async function getDingtalkToken(): Promise<string | null> {
 // ──────────────────────────────────────────────────────────────
 
 /**
- * 通过钉钉机器人单聊向指定用户发送文本消息。
+ * 钉钉消息类型枚举
+ */
+export type DingtalkMessageType = "text" | "link";
+
+/**
+ * 发送钉钉机器人消息的选项
+ */
+export interface SendDingtalkMessageOptions {
+  /** 消息类型 */
+  type: DingtalkMessageType;
+  /** 消息内容 - 纯文本 */
+  text?: string;
+  /** 消息内容 - 链接 */
+  link?: {
+    title: string;
+    text: string;
+    messageUrl: string;
+    picUrl?: string;
+  };
+}
+
+/**
+ * 通过钉钉机器人单聊向指定用户发送消息（支持文本和链接）。
  *
  * 接口：POST https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend
  * 鉴权：x-acs-dingtalk-access-token 请求头
  *
  * @param dingtalkUserId 目标用户的钉钉 userId
- * @param content        消息正文（纯文本）
+ * @param options        消息选项
  *
  * 失败时仅 logger.warn，不抛出异常。
  */
 export async function sendDingtalkRobotMessage(
   dingtalkUserId: string,
-  content: string,
+  options: SendDingtalkMessageOptions,
 ): Promise<void> {
   const robotCode = process.env.DINGTALK_ROBOT_CODE;
   if (!robotCode) {
@@ -114,6 +136,30 @@ export async function sendDingtalkRobotMessage(
   }
 
   try {
+    let msgKey: string;
+    let msgParam: string;
+
+    if (options.type === "text") {
+      // 文本消息
+      msgKey = "sampleText";
+      msgParam = JSON.stringify({ content: options.text || "" });
+    } else if (options.type === "link") {
+      // 链接消息
+      msgKey = "link";
+      msgParam = JSON.stringify({
+        title: options.link?.title || "",
+        text: options.link?.text || "",
+        messageUrl: options.link?.messageUrl || "",
+        picUrl: options.link?.picUrl || ""
+      });
+    } else {
+      logger.warn(
+        { service: "dingtalk", dingtalkUserId },
+        `不支持的消息类型：${options.type}`
+      );
+      return;
+    }
+
     const res = await fetch(
       "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",
       {
@@ -125,8 +171,8 @@ export async function sendDingtalkRobotMessage(
         body: JSON.stringify({
           robotCode,
           userIds: [dingtalkUserId],
-          msgKey: "sampleText",
-          msgParam: JSON.stringify({ content }),
+          msgKey,
+          msgParam,
         }),
       },
     );
@@ -152,6 +198,19 @@ export async function sendDingtalkRobotMessage(
   }
 }
 
+/**
+ * 便捷方法：发送纯文本消息
+ */
+export async function sendDingtalkTextMessage(
+  dingtalkUserId: string,
+  content: string,
+): Promise<void> {
+  await sendDingtalkRobotMessage(dingtalkUserId, { 
+    type: "text", 
+    text: content 
+  });
+}
+
 // ──────────────────────────────────────────────────────────────
 // 按 recipientId 推送通知（供 workspace route 调用）
 // ──────────────────────────────────────────────────────────────
@@ -160,6 +219,12 @@ export interface PendingDingtalkNotif {
   recipientId: number;
   title: string;
   body?: string | null;
+  /** 可选的链接地址，如果提供，将发送链接类型的消息 */
+  linkUrl?: string;
+  /** 链接消息的描述文本（如果不提供，则使用body） */
+  linkDescription?: string;
+  /** 链接消息的图片URL */
+  linkPicUrl?: string;
 }
 
 /**
@@ -203,12 +268,30 @@ export async function pushPendingDingtalkNotifs(
     const dingtalkUserId = userMap.get(notif.recipientId);
     if (!dingtalkUserId) continue;
 
-    const content = notif.body
-      ? `【工作平台】${notif.title}\n${notif.body}`
-      : `【工作平台】${notif.title}`;
+    if (notif.linkUrl) {
+      // 发送链接类型的消息
+      const linkTitle = notif.title;
+      const linkText = notif.linkDescription || notif.body || '';
+      const messageUrl = notif.linkUrl;
+      
+      void sendDingtalkRobotMessage(dingtalkUserId, {
+        type: 'link',
+        link: {
+          title: linkTitle,
+          text: linkText,
+          messageUrl,
+          picUrl: notif.linkPicUrl
+        }
+      });
+    } else {
+      // 发送纯文本消息
+      const content = notif.body
+        ? `【工作平台】${notif.title}\n${notif.body}`
+        : `【工作平台】${notif.title}`;
 
-    // fire-and-forget：不 await，不阻塞调用方
-    void sendDingtalkRobotMessage(dingtalkUserId, content);
+      // fire-and-forget：不 await，不阻塞调用方
+      void sendDingtalkTextMessage(dingtalkUserId, content);
+    }
   }
 }
 
