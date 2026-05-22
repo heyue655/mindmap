@@ -1,7 +1,7 @@
 # ────────────────────────────────────────────────────────────────
 # Stage 1: 安装依赖（含 devDependencies，用于构建）
 # ────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM docker.das-security.cn/node:22-alpine AS deps
 WORKDIR /app
 
 # 安装 libc6-compat，解决 alpine 下部分 native 模块兼容问题
@@ -16,7 +16,7 @@ RUN npm ci && npx prisma generate
 # ────────────────────────────────────────────────────────────────
 # Stage 2: 构建 Next.js 应用
 # ────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM docker.das-security.cn/node:22-alpine AS builder
 WORKDIR /app
 
 # 构建时需要 NEXT_PUBLIC_USE_API=true 使 API 模式生效
@@ -32,7 +32,7 @@ RUN npm run build
 # ────────────────────────────────────────────────────────────────
 # Stage 3: 最小化运行时镜像
 # ────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM docker.das-security.cn/node:22-alpine AS runner
 WORKDIR /app
 
 # 安全：以非 root 用户运行
