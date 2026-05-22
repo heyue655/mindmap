@@ -11,7 +11,8 @@ COPY package*.json ./
 COPY prisma ./prisma/
 
 # 安装全部依赖（包括 devDependencies）并生成 Prisma Client
-RUN npm ci && npx prisma generate
+# --omit=optional 跳过平台不兼容的可选包（如 @next/swc-win32-x64-msvc）
+RUN npm ci --omit=optional && npx prisma generate
 
 # ────────────────────────────────────────────────────────────────
 # Stage 2: 构建 Next.js 应用
