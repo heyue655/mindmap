@@ -1,4 +1,4 @@
-import ResetPasswordPage from "@/pages/ResetPasswordPage";
+import ResetPasswordPage from "@/views/ResetPasswordPage";
 
 export const dynamic = "force-dynamic";
 

@@ -1,4 +1,4 @@
-import TeamPage from "@/pages/TeamPage";
+import TeamPage from "@/views/TeamPage";
 
 export const dynamic = "force-dynamic";
 

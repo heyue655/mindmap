@@ -1,4 +1,4 @@
-import AdminDepartmentsPage from "@/pages/admin/AdminDepartmentsPage";
+import AdminDepartmentsPage from "@/views/admin/AdminDepartmentsPage";
 
 export const dynamic = "force-dynamic";
 

@@ -1,4 +1,4 @@
-import ReportsPage from "@/pages/ReportsPage";
+import ReportsPage from "@/views/ReportsPage";
 
 export const dynamic = "force-dynamic";
 

@@ -1,5 +1,3 @@
-import InboxPage from "@/pages/InboxPage";
+import InboxWrapper from './InboxWrapper';
 
-export const dynamic = "force-dynamic";
-
-export default InboxPage;
+export default InboxWrapper;

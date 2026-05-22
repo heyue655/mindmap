@@ -1,4 +1,4 @@
-import NotificationsPage from "@/pages/NotificationsPage";
+import NotificationsPage from "@/views/NotificationsPage";
 
 export const dynamic = "force-dynamic";
 

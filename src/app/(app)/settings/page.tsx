@@ -1,4 +1,4 @@
-import Placeholder from "@/pages/Placeholder";
+import Placeholder from "@/views/Placeholder";
 
 export const dynamic = "force-dynamic";
 
