@@ -1,6 +1,19 @@
 # 变更日志
 
+## [2026-05-24] 修复钉钉同步用户接口性能问题（二次优化）
+
+### 修复
+- B-07-002 `sync-users` 4000+ 新用户时 bcrypt 并发 5 需 5-11 分钟导致 504；改为所有新同步用户共用单次哈希（初始密码 `Changeme@1`，`mustResetPassword=true` 强制首次登录改密），bcrypt 从 4152 次降为 1 次
+- B-07-002 `sync-users` 离职禁用逐条 `update` 改为单次 `updateMany`，消除 N+1
+- B-07-002 `sync-users` 各阶段增加耗时日志（`[阶段N]` 标记），便于定位性能瓶颈
+- B-07-002 `createMany` 由单次全量改为每批 500 条，防止 SQL 超长
+
 ## [2026-05-24] 修复钉钉组织架构同步 504 超时
+
+### 修复
+- B-07-001 nginx `proxy_read_timeout` 仅 60s，钉钉同步耗时超限导致 504；新增专属 location 将钉钉同步接口超时提升至 900s（15 分钟）
+- B-07-001 `POST /api/admin/dingtalk/sync-departments` 循环内存在 N+1 DB 查询（每部门各执行 `findUnique`/`findFirst`），改为同步前一次性预加载全量部门至 Map，循环内改为纯内存查找，消除冗余数据库往返
+
 
 ### 修复
 - B-07-001 nginx `proxy_read_timeout` 仅 60s，钉钉同步耗时超限导致 504；新增专属 location 将钉钉同步接口超时提升至 300s
