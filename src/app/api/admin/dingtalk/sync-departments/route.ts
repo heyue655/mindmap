@@ -44,21 +44,33 @@ async function postHandler(req: NextRequest): Promise<NextResponse> {
   // dingDeptId → 数据库 id 的映射（用于解析父子关系）
   const dingToDb = new Map<number, number>();
 
-  // 预加载数据库中已有 dingDeptId 的部门
-  const existingDepts = await prisma.department.findMany({
-    where: { dingDeptId: { not: null } },
-    select: { id: true, dingDeptId: true },
+  // 预加载数据库中所有部门（含 dingDeptId 为 null 的），避免循环内 N+1 查询
+  const allExistingDepts = await prisma.department.findMany({
+    select: { id: true, dingDeptId: true, parentId: true, name: true },
   });
-  for (const d of existingDepts) {
+  // dingDeptId → dept（用于循环内直接 Map 查找，替代 findUnique）
+  const dingIdToExisting = new Map<number, (typeof allExistingDepts)[0]>();
+  // 根部门（parentId=null）预取一条，替代根节点回退时的 findFirst
+  let rootFallbackDept: (typeof allExistingDepts)[0] | null = null;
+  for (const d of allExistingDepts) {
     if (d.dingDeptId !== null) {
       dingToDb.set(d.dingDeptId, d.id);
+      dingIdToExisting.set(d.dingDeptId, d);
+    }
+    if (d.parentId === null && rootFallbackDept === null) {
+      rootFallbackDept = d;
     }
   }
+  // 按 id 升序选取最小根部门（与原逻辑 orderBy id asc 保持一致）
+  rootFallbackDept =
+    allExistingDepts
+      .filter((d) => d.parentId === null)
+      .sort((a, b) => a.id - b.id)[0] ?? null;
 
   let created = 0;
   let updated = 0;
 
-  // BFS 顺序保证父先于子，逐条 upsert
+  // BFS 顺序保证父先于子，逐条 upsert（循环内不再执行任何 DB 查询）
   for (const dept of deptTree) {
     // 解析父部门 dbId（根节点 parentDeptId=null，parentDbId 保持 null）
     let parentDbId: number | null = null;
@@ -72,23 +84,16 @@ async function postHandler(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // 优先按 dingDeptId 查找已有记录
-    let existing = await prisma.department.findUnique({
-      where: { dingDeptId: dept.deptId },
-    });
+    // 优先按 dingDeptId 在预加载 Map 中查找
+    let existing = dingIdToExisting.get(dept.deptId) ?? null;
 
-    // 根节点（parentDeptId=null）未命中时，回退到数据库中 parentId=NULL 的顶级部门（覆盖初始化数据）
-    if (!existing && dept.parentDeptId === null) {
-      existing = await prisma.department.findFirst({
-        where: { parentId: null },
-        orderBy: { id: "asc" },
-      });
-      if (existing) {
-        logger.info(
-          { user: userId, deptId: dept.deptId, dbId: existing.id },
-          `根节点覆盖：钉钉 dept_id=${dept.deptId}「${dept.name}」→ 数据库「${existing.name}」(id=${existing.id})`,
-        );
-      }
+    // 根节点（parentDeptId=null）未命中时，回退到预加载的顶级部门（覆盖初始化数据）
+    if (!existing && dept.parentDeptId === null && rootFallbackDept) {
+      existing = rootFallbackDept;
+      logger.info(
+        { user: userId, deptId: dept.deptId, dbId: existing.id },
+        `根节点覆盖：钉钉 dept_id=${dept.deptId}「${dept.name}」→ 数据库「${existing.name}」(id=${existing.id})`,
+      );
     }
 
     if (existing) {

@@ -1,5 +1,11 @@
 # 变更日志
 
+## [2026-05-24] 修复钉钉组织架构同步 504 超时
+
+### 修复
+- B-07-001 nginx `proxy_read_timeout` 仅 60s，钉钉同步耗时超限导致 504；新增专属 location 将钉钉同步接口超时提升至 300s
+- B-07-001 `POST /api/admin/dingtalk/sync-departments` 循环内存在 N+1 DB 查询（每部门各执行 `findUnique`/`findFirst`），改为同步前一次性预加载全量部门至 Map，循环内改为纯内存查找，消除冗余数据库往返
+
 ## [2026-05-22] 钉钉SSO登录与链接通知消息
 
 ### 新增
